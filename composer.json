@@ -1,0 +1,20 @@
+{
+    "name": "a/a",
+    "description": "a",
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/App"
+        }
+    },
+    "authors": [
+        {
+            "name": "a",
+            "email": "a@a.a"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {
+        "ext-mbstring": "*",
+        "ext-readline": "*"
+    }
+}
