@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 namespace App\GameObject;
 
 class CardDeck
@@ -35,6 +38,6 @@ class CardDeck
 
     public function getCards(): array
     {
-        return $this->deck ;
+        return $this->deck;
     }
 }

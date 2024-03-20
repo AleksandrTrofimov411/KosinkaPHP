@@ -1,13 +1,12 @@
 <?php
 
-declare(strict_types = 1) ;
+declare(strict_types=1);
 
 namespace App\Painter;
 
 class Canvas
 {
-
-    private array $canvas = [] ;
+    private array $canvas = [];
 
     public function getCanvas(): array
     {
@@ -26,6 +25,7 @@ class Canvas
             $picture .= implode('', $line);
             $picture .= "\n";
         }
+
         return $picture;
     }
 }
