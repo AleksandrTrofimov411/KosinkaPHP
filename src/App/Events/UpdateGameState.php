@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Events;
+declare(strict_types=1);
 
-use App\EventLoop;
+namespace App\Events;
 
 class UpdateGameState extends Event
 {

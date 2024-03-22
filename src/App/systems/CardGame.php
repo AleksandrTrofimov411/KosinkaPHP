@@ -17,6 +17,14 @@ use App\Events\GameOver;
 use App\Events\StartGame;
 use App\Events\UpdateGameState;
 use App\Events\UpdateMainScreen;
+use App\Exception\CardGame\AttemptOpenMissingCardException;
+use App\Exception\CardGame\CardsNotSameSuitException;
+use App\Exception\CardGame\CardsSameColorException;
+use App\Exception\CardGame\CardsSameSuitException;
+use App\Exception\CardGame\MainDeckClosedForShufflingException;
+use App\Exception\CardGame\NotValidMoveException;
+use App\Exception\CardGame\PlayingCardMissingException;
+use App\Exception\CardGame\SectionNotExistException;
 use App\Factory\DeckFactory\CardDecksFactoryInterface;
 use App\GameObject\Card;
 use Exception;
@@ -66,7 +74,6 @@ class CardGame extends AbstractSystem
             'C' => fn() => $this->cancelLastMove()
         ];
     }
-
     public function getSubscriptions(): array
     {
         return [
@@ -75,7 +82,7 @@ class CardGame extends AbstractSystem
                 $this->updateGameState($event->getGameData());
             },
             CheckUserInputEvent::class => function (CheckUserInputEvent $event) {
-                $this->moveManager($event->getInput());
+                $this->moveManager($event->getGameData()[0]);
             }
         ];
     }
@@ -100,17 +107,11 @@ class CardGame extends AbstractSystem
         $this->gameData['gameState'][$cardDecks['winningCardDeck']->getTypeDeck()] = $cardDecks['winningCardDeck']->getCards();
     }
 
-    public function updateGameState(array|string $playerInput): void
+    public function updateGameState(array $playerInput): void
     {
         try {
-            if (is_string($playerInput)) {
-                if ($playerInput === 'R') {
-                    $this->checkPossibilityOfClosingMainDeckOfCards();
-                }
-                if ($playerInput === 'O') {
-                    $this->isPossibleToGetCardFromMainDeck();
-                }
-                $this->runMethodOnBind($playerInput);
+            if (is_string($playerInput[0])) {
+                $this->bindHandler($playerInput[0]);
             } else {
                 $this->thisSectionExists($playerInput);
                 $this->thisCardDeckExists($playerInput);
@@ -118,17 +119,13 @@ class CardGame extends AbstractSystem
                 $card = $this->getCardOnPlayerInputFrom($playerInput);
                 $cardOnWhichToPut = $this->getCardOnPlayerInputTo($playerInput);
                 if (!$this->isCardOpen($card) || !$this->isCardOpen($cardOnWhichToPut)) {
-                    throw new \Exception('Error. You cannot make this move');
+                    throw new NotValidMoveException();
                 }
                 $this->checkThePossibilityOfMovingByCardNumbers($playerInput);
                 $this->checkTheAbilityToMoveByCardSuit($playerInput);
                 $this->checkTheAbilityToMoveByColorCards($playerInput);
                 $cards = $this->pickUpTheCard($playerInput);
-                if (is_array($cards)) {
-                    $playerInput['numberOfMovedCards'] = count($cards);
-                } else {
-                    $playerInput['numberOfMovedCards'] = 1;
-                }
+                $playerInput['numberOfMovedCards'] = count($cards);
                 $this->addCard($playerInput, $cards);
                 if ($playerInput['sectionFrom'] === self::SECTION_COLUMN_CARDS) {
                     $this->openCardsInColumnsCardDeck($playerInput);
@@ -151,16 +148,21 @@ class CardGame extends AbstractSystem
                     $this->eventPusher->push($event1, $event2, $event3);
                 }
             }
-        } catch (\Exception $message) {
-            $message = $message->getMessage();
-            $event1 = new UpdateMainScreen();
-            $event1->setGameData($this->gameData);
-            $event2 = new AddInputErrorMessage();
-            $event2->setGameData([$message]);
-            $event3 = new DisplayMainScreen();
-            $event4 = new DisplayMainScreenWithFirstInput();
-            $this->eventPusher->push($event1, $event2, $event3, $event4);
+        } catch (Exception $e) {
+            $this->exceptionHandler($e);
         }
+    }
+
+    public function exceptionHandler(Exception $e): void
+    {
+        $message = $e->getMessage();
+        $event1 = new UpdateMainScreen();
+        $event1->setGameData($this->gameData);
+        $event2 = new AddInputErrorMessage();
+        $event2->setGameData([$message]);
+        $event3 = new DisplayMainScreen();
+        $event4 = new DisplayMainScreenWithFirstInput();
+        $this->eventPusher->push($event1, $event2, $event3, $event4);
     }
 
     public function addOneMove(): void
@@ -171,8 +173,8 @@ class CardGame extends AbstractSystem
     public function runMethodOnBind(string $bindEnteredByThePlayer): void
     {
         $binds = $this->getBinds();
-        $handlerMethod = $binds[$bindEnteredByThePlayer];
-        $handlerMethod();
+        $handlerBind = $binds[$bindEnteredByThePlayer];
+        $handlerBind();
         if ($bindEnteredByThePlayer !== 'H') {
             $event1 = new UpdateMainScreen();
             $event1->setGameData($this->gameData);
@@ -181,7 +183,6 @@ class CardGame extends AbstractSystem
             $this->eventPusher->push($event1, $event2, $event3);
         }
     }
-
     /**
      * @throws Exception
      */
@@ -194,7 +195,7 @@ class CardGame extends AbstractSystem
             }
         }
         if ($openCardCounter !== count($this->gameData['gameState']['mainCardDeck'])) {
-            throw new Exception('Error. Part of the deck is still not open!');
+            throw new MainDeckClosedForShufflingException();
         }
     }
 
@@ -214,7 +215,7 @@ class CardGame extends AbstractSystem
                 return;
             }
         }
-        throw new Exception("Error!. First flip the main deck\nwith the 'R' button!");
+        throw new AttemptOpenMissingCardException();
     }
 
     public function closeMainDeckOfCards(): void
@@ -240,35 +241,32 @@ class CardGame extends AbstractSystem
         }
     }
 
-    public function addCard(array $playerInput, Card|array $card): void // ЧЕК ДО постановки и после
+    public function addCard(array $playerInput, array $cards): void
     {
         $keyCardDeckInSection = $playerInput['numDeckTo'] - 1;
         if ($playerInput['sectionTo'] == self::SECTION_COLUMN_CARDS) {
-            if (is_array($card)) {
-                foreach ($card as $oneCard) {
-                    $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][] = $oneCard;
-                }
-            } else {
-                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][] = $card;
+            foreach ($cards as $oneCard) {
+                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][] = $oneCard;
             }
         }
         if ($playerInput['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
             if ($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][0] === NULL) {
-                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][0] = $card;
+                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][0] = $cards[0];
             } else {
-                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][] = $card;
+                $this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]][$keyCardDeckInSection][] = $cards[0];
             }
         }
         if ($playerInput['sectionTo'] == self::SECTION_MAIN_CARD_DECK) {
-            array_unshift($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]], $card);
+            array_unshift($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionTo']]], $cards[0]);
         }
     }
 
-    public function pickUpTheCard(array $playerInput): object|array
+
+    public function pickUpTheCard(array $playerInput): array
     {
         $keyCardDeckInSection = $playerInput['numDeckFrom'] - 1;
         if ($playerInput['sectionFrom'] == self::SECTION_MAIN_CARD_DECK) {
-            return array_shift($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]]);
+            return [array_shift($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]])];
         }
         if ($playerInput['sectionFrom'] == self::SECTION_COLUMN_CARDS) {
             $openCardsCounter = 0;
@@ -278,7 +276,7 @@ class CardGame extends AbstractSystem
                 }
             }
             if ($openCardsCounter === 1 || $playerInput['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
-                return array_pop($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]][$keyCardDeckInSection]);
+                return [array_pop($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]][$keyCardDeckInSection])];
             } else {
                 $numFirstOpenCardInColumn = count($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]][$keyCardDeckInSection]) - $openCardsCounter;
                 $cards = [];
@@ -292,7 +290,7 @@ class CardGame extends AbstractSystem
             }
         }
         if ($playerInput['sectionFrom'] == self::SECTION_WINNING_CARD_DECK) {
-            return array_pop($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]][$keyCardDeckInSection]);
+            return [array_pop($this->gameData['gameState'][$this->cardDeckSectionNames[$playerInput['sectionFrom']]][$keyCardDeckInSection])];
         }
         return [];
     }
@@ -352,9 +350,8 @@ class CardGame extends AbstractSystem
         }
         return true;
     }
-
     /**
-     * @throws \Exception
+     * @throws NotValidMoveException
      */
     public function checkThePossibilityOfMovingByCardNumbers(array $playerInput): void
     {
@@ -362,7 +359,7 @@ class CardGame extends AbstractSystem
         $cardOnWhichToPut = $this->getCardOnPlayerInputTo($playerInput);
 
         if ($playerInput['sectionTo'] == self::SECTION_MAIN_CARD_DECK) {
-            throw new \Exception('Error . You cannot make this move');
+            throw new NotValidMoveException();
         }
 
         if ($cardOnWhichToPut === NULL) {
@@ -373,42 +370,42 @@ class CardGame extends AbstractSystem
                 return;
             }
             if ($card->getNumCard() !== 14 && $playerInput['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
             }
             if ($card->getNumCard() !== 13 && $playerInput['sectionTo'] == self::SECTION_COLUMN_CARDS) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
 
             }
         }
 
         if ($card->getNumCard() === $cardOnWhichToPut->getNumCard()) {
-            throw new \Exception('Error . You cannot make this move!');
+            throw new NotValidMoveException();
         }
 
         if ($playerInput['sectionTo'] == self::SECTION_COLUMN_CARDS) {
 
             if ($card->getNumCard() >= $cardOnWhichToPut->getNumCard() || $card->getNumCard() < $cardOnWhichToPut->getNumCard() - 1 || empty($cardOnWhichToPut)) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
             }
             if ($card->getNumCard() == 13 && $cardOnWhichToPut->getNumCard() == 14) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
             }
 
         }
 
         if ($playerInput['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
             if ($cardOnWhichToPut->getNumCard() === 14 && $card->getNumCard() != 2 && $cardOnWhichToPut->getNumCard() != 2) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
             }
             if ($card->getNumCard() - 1 != $cardOnWhichToPut->getNumCard() && $cardOnWhichToPut->getNumCard() != 14) {
-                throw new \Exception('Error . You cannot make this move!');
+                throw new NotValidMoveException();
             }
         }
 
     }
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
     public function checkTheAbilityToMoveByCardSuit(array $playerInput): void
     {
@@ -418,13 +415,16 @@ class CardGame extends AbstractSystem
             return;
         }
         if ($card->getTypeCard() != $cardOnWhichToPut->getTypeCard() && $playerInput['sectionTo'] === self::SECTION_WINNING_CARD_DECK) {
-            throw new \Exception("Error . In the third section, \nonly cards of the same suit can be stacked!");
+            throw new CardsNotSameSuitException();
         }
         if ($card->getTypeCard() === $cardOnWhichToPut->getTypeCard() && $playerInput['sectionTo'] === self::SECTION_COLUMN_CARDS) {
-            throw new \Exception("Error . In the second section, you can not put\ncards of the same suit on top of each other!");
+            throw new CardsSameSuitException();
         }
     }
 
+    /**
+     * @throws CardsSameColorException
+     */
     public function checkTheAbilityToMoveByColorCards(array $playerInput): void
     {
         $card = $this->getCardOnPlayerInputFrom($playerInput);
@@ -433,7 +433,7 @@ class CardGame extends AbstractSystem
             return;
         }
         if ($card->getColor() === $cardOnWhichToPut->getColor() && $playerInput['sectionTo'] != self::SECTION_WINNING_CARD_DECK) {
-            throw new Exception('Error . These cards are the same color');
+            throw new CardsSameColorException();
         }
 
     }
@@ -448,7 +448,7 @@ class CardGame extends AbstractSystem
     }
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
     public function findPossibleMove(): void
     {
@@ -457,7 +457,6 @@ class CardGame extends AbstractSystem
         $winningCardDecks = $this->gameData['gameState']['winningCardDeck'];
         $counterNumDeckInSectionTo = 0;
         $counterNumDeckInSectionFrom = 0;
-
         $moveHelp['sectionFrom'] = 1;
         $moveHelp['numDeckFrom'] = 1;
         $moveHelp['sectionTo'] = 0;
@@ -513,7 +512,6 @@ class CardGame extends AbstractSystem
                 }
             }
         }
-
         $counterNumDeckInSectionTo = 0;
         $moveHelp['sectionFrom'] = 2;
         $moveHelp['sectionTo'] = 2;
@@ -590,7 +588,6 @@ class CardGame extends AbstractSystem
         $event4 = new DisplayMainScreenWithFirstInput();
         $this->eventPusher->push($event1, $event2, $event3, $event4);
     }
-
     public function allCardsAreOpen(array $cardDeck): bool
     {
         foreach ($cardDeck as $card) {
@@ -601,35 +598,42 @@ class CardGame extends AbstractSystem
         return true;
     }
 
-    public function pickUpTheCardForCancelLastMove(array $lastMove): card|array
+    public function pickUpTheCardForCancelLastMove(array $lastMove): array
     {
         $cards = [];
         $reversePlayerInput = $this->getReversePlayerInput($lastMove);
         $keyCardDeckInSection = $reversePlayerInput['numDeckFrom'] - 1;
         if ($lastMove['sectionFrom'] == self::SECTION_COLUMN_CARDS) {
-            if ($lastMove['sectionTo'] == self::SECTION_COLUMN_CARDS) {
-                if ($lastMove['numberOfMovedCards'] === 1) {
-                    return array_pop($this->gameData['gameState']['columnsCardDeck'][$keyCardDeckInSection]);
-                } else {
-                    for ($i = 0; $i < $lastMove['numberOfMovedCards']; $i++) {
-                        $cards[] = array_pop($this->gameData['gameState']['columnsCardDeck'][$keyCardDeckInSection]);
-                    }
-                    return $cards;
-                }
+            for ($i = 0; $i < $lastMove['numberOfMovedCards']; $i++) {
+                $cards[] = array_pop($this->gameData['gameState']['columnsCardDeck'][$keyCardDeckInSection]);
             }
-            if ($lastMove['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
-                return array_pop($this->gameData['gameState']['winningCardDeck'][$keyCardDeckInSection]);
-            }
+            return $cards;
         }
-
         if ($lastMove['sectionFrom'] == self::SECTION_MAIN_CARD_DECK) {
-            if ($lastMove['sectionTo'] == self::SECTION_COLUMN_CARDS) {
-                return array_pop($this->gameData['gameState']['columnsCardDeck'][$keyCardDeckInSection]);
-            }
-            if ($lastMove['sectionTo'] == self::SECTION_WINNING_CARD_DECK) {
-
-            }
+            return [array_pop($this->gameData['gameState']['columnsCardDeck'][$keyCardDeckInSection])];
         }
+        return [];
+    }
+
+    /**
+     * @throws NotValidMoveException
+     * @throws Exception
+     */
+    public function bindHandler(string $playerBindInput): void
+    {
+        if ($playerBindInput !== 'O'
+            && $playerBindInput !== 'R'
+            && $playerBindInput !== 'C'
+            && $playerBindInput !== 'H') {
+            throw new NotValidMoveException();
+        }
+        if ($playerBindInput === 'R') {
+            $this->checkPossibilityOfClosingMainDeckOfCards();
+        }
+        if ($playerBindInput === 'O') {
+            $this->isPossibleToGetCardFromMainDeck();
+        }
+        $this->runMethodOnBind($playerBindInput);
     }
 
     public function getReversePlayerInput(array $playerInput): array
@@ -643,7 +647,7 @@ class CardGame extends AbstractSystem
 
     public function cancelLastMove(): void
     {
-        $lastMove = array_pop($this->gameData['historyPlayerInput']);
+        $lastMove = end($this->gameData['historyPlayerInput']);
         if (empty($lastMove)) {
             return;
         }
@@ -674,107 +678,113 @@ class CardGame extends AbstractSystem
                 $this->addCard($reversePlayerInput, $card);
             }
         }
+        $this->clearLastPlayerMoveFromHistory();
         $this->addOneMove();
     }
 
-    public function returnPositionOfCardsAfterCancelMove(array $playerInput): void
+    public function clearLastPlayerMoveFromHistory(): void
     {
-        $openCardsCounter = 0;
-        if (empty($this->gameData['gameState']['columnsCardDeck'][$playerInput['numDeckFrom'] - 1])) {
-            return;
-        }
-        foreach ($this->gameData['gameState']['columnsCardDeck'][$playerInput['numDeckFrom'] - 1] as $card) {
-            if ($this->isCardOpen($card)) {
-                $openCardsCounter++;
-            }
-        }
-        if ($openCardsCounter !== 1) {
-            return;
-        } else {
-            end($this->gameData['gameState']['columnsCardDeck'][$playerInput['numDeckFrom'] - 1])->setCardPosition('closed');
-        }
+        array_pop($this->gameData['historyPlayerInput']);
     }
 
-    public function playingCardMissing(array $gameData): void
+
+    public function returnPositionOfCardsAfterCancelMove(array $playerInput): void
     {
-        $card = $this->getCardOnPlayerInputFrom($gameData);
-        if (empty($card)) {
-            throw new Exception('Error.  Playing card missing!');
+        $sectionFrom = $this->gameData['gameState']['columnsCardDeck'][$playerInput['numDeckFrom'] - 1];
+        $numberOfMovedCards = end($this->gameData['historyPlayerInput'])['numberOfMovedCards'];
+        if (count($sectionFrom) > $numberOfMovedCards) {
+            $cardKeyToClosed = count($sectionFrom) - $numberOfMovedCards - 1;
+            $this->gameData['gameState']
+            ['columnsCardDeck']
+            [$playerInput['numDeckFrom'] - 1]
+            [$cardKeyToClosed]->setCardPosition('closed');
         }
     }
 
     /**
-     * @throws \Exception
+     * @throws PlayingCardMissingException
+     */
+    public function playingCardMissing(array $gameData): void
+    {
+        $card = $this->getCardOnPlayerInputFrom($gameData);
+        if (empty($card)) {
+            throw new PlayingCardMissingException();
+        }
+    }
+    /**
+     * @throws SectionNotExistException
      */
     public function thisSectionExists(array $gameData): void
     {
         $sectionFrom = $gameData['sectionFrom'];
         $sectionTo = $gameData['sectionTo'];
         if ($sectionFrom < 1 || $sectionFrom > 3 || $sectionTo < 1 || $sectionTo > 3) {
-            throw new \Exception('Error. Invalid section input!');
+            throw new SectionNotExistException();
         }
     }
 
     /**
-     * @throws \Exception
+     * @throws SectionNotExistException
      */
     public function thisCardDeckExists(array $gameData): void
     {
         if ($gameData['numDeckFrom'] > $this->numberOfDecksInSection[$gameData['sectionFrom']] || $gameData['numDeckFrom'] < 1) {
-            throw new Exception('Error. Invalid section input!');
+            throw new SectionNotExistException();
         }
         if ($gameData['numDeckTo'] > $this->numberOfDecksInSection[$gameData['sectionTo']] || $gameData['numDeckTo'] < 1) {
-            throw new Exception('Error. Invalid section input!');
+            throw new SectionNotExistException();
         }
     }
 
     public function moveManager(string $playerInput): void
     {
-        if ($playerInput === 'V') {
-            var_dump($this->gameData['gameState']['columnsCardDeck']);
-        }
-        if ($playerInput === 'H' && $this->inputCounter === 0) {
-            $this->updateGameState('H');
-            return;
-        }
-        if ($playerInput === 'O' && $this->inputCounter === 0) {
-            $this->updateGameState('O');
-            return;
-        }
-        if ($playerInput === 'C' && $this->inputCounter === 0) {
-            $this->updateGameState('C');
-            return;
-        }
-        if ($playerInput === 'R' && $this->inputCounter === 0) {
-            $this->updateGameState('R');
-            return;
+        try {
+            if (!is_numeric($playerInput)) {
+                $playerInput = strtoupper($playerInput);
+                if ($playerInput === 'H' && $this->inputCounter === 0) {
+                    $this->updateGameState(['H']);
+                    return;
+                } elseif ($playerInput === 'O' && $this->inputCounter === 0) {
+                    $this->updateGameState(['O']);
+                    return;
+                } elseif ($playerInput === 'C' && $this->inputCounter === 0) {
+                    $this->updateGameState(['C']);
+                    return;
+                } elseif ($playerInput === 'R' && $this->inputCounter === 0) {
+                    $this->updateGameState(['R']);
+                    return;
+                } else {
+                    throw new NotValidMoveException();
+                }
+            }
+            $this->inputCounter++;
+            if ($this->inputCounter === 1) {
+                $event = new DisplayMainScreenWithSecondInput();
+                $this->eventPusher->push($event);
+                $this->playerMoves['sectionFrom'] = (int)$playerInput;
+            }
+            if ($this->inputCounter === 2) {
+                $event = new DisplayMainScreenWithThirdInput();
+                $this->eventPusher->push($event);
+                $this->playerMoves['numDeckFrom'] = (int)$playerInput;
+            }
+            if ($this->inputCounter === 3) {
+                $event = new DisplayMainScreenWithFourthInput;
+                $this->eventPusher->push($event);
+                $this->playerMoves['sectionTo'] = (int)$playerInput;
+            }
+            if ($this->inputCounter === 4) {
+                $this->playerMoves['numDeckTo'] = (int)$playerInput;
+                $event = new UpdateGameState();
+                $event->setGameData($this->playerMoves);
+                $this->eventPusher->push($event);
+                $this->clearPlayerMoves();
+                $this->clearInputCounter();
+            }
+        } catch (Exception $e) {
+            $this->exceptionHandler($e);
         }
 
-        $this->inputCounter++;
-
-        if ($this->inputCounter === 1) {
-            $event = new DisplayMainScreenWithSecondInput();
-            $this->eventPusher->push($event);
-            $this->playerMoves['sectionFrom'] = (int)$playerInput;
-        }
-        if ($this->inputCounter === 2) {
-            $event = new DisplayMainScreenWithThirdInput();
-            $this->eventPusher->push($event);
-            $this->playerMoves['numDeckFrom'] = (int)$playerInput;
-        }
-        if ($this->inputCounter === 3) {
-            $event = new DisplayMainScreenWithFourthInput;
-            $this->eventPusher->push($event);
-            $this->playerMoves['sectionTo'] = (int)$playerInput;
-        }
-        if ($this->inputCounter === 4) {
-            $this->playerMoves['numDeckTo'] = (int)$playerInput;
-            $event = new UpdateGameState();
-            $event->setGameData($this->playerMoves);
-            $this->eventPusher->push($event);
-            $this->clearPlayerMoves();
-            $this->clearInputCounter();
-        }
     }
 
     public function clearInputCounter(): void

@@ -62,9 +62,7 @@ class GraphicSystem extends AbstractSystem
             AddMoveHelpMessageOnMainScreen::class => function (AddMoveHelpMessageOnMainScreen $event) {
                 $this->addMoveHelpMessageOnMainScreen($event->getGameData());
             },
-            GameOver::class => function (GameOver $event) {
-                $this->addMessageAboutVictory($event->getGameData());
-            }
+            GameOver::class => fn () => $this->addMessageAboutVictory()
         ];
     }
 
@@ -107,7 +105,7 @@ class GraphicSystem extends AbstractSystem
         }
     }
 
-    public function addMessageAboutVictory(array $gameData): void
+    public function addMessageAboutVictory(): void
     {
         $this->mainScreen = $this->painter->addPicture($this->mainScreen, 'Victory!', 114, 25);
         $this->mainScreen = $this->painter->addPicture($this->mainScreen, " /\_/\ \n >^,^<\n  /\ \n (__)__", 114, 20);

@@ -27,8 +27,9 @@ class InputSystem extends AbstractSystem
     public function acceptPlayerInput(): void
     {
         $acceptInput = $this->keyboard->input();
-        $this->eventPusher->push(new CheckUserInputEvent($acceptInput));
+        $event = new CheckUserInputEvent();
+        $event->setGameData([$acceptInput]);
+        $this->eventPusher->push($event);
 
     }
-
 }

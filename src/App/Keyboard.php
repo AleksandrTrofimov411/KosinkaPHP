@@ -10,5 +10,4 @@ class Keyboard
     {
         return readline();
     }
-
 }

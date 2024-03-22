@@ -33,7 +33,7 @@ class Application
             $system = $container->get($systemClass);
             $eventLoop->register($system);
         }
-        $eventLoop->push(new StartGame()) ;
+        $eventLoop->push(new StartGame());
         $eventLoop->run();
     }
 }
