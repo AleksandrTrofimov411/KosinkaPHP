@@ -7,6 +7,11 @@ class CardImageSystem
 {
     protected string $image;
 
+    public function __construct()
+    {
+        return $this;
+    }
+
     public function getPicture(): string
     {
         return $this->image;
