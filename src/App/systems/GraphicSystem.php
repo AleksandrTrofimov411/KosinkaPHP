@@ -124,8 +124,8 @@ class GraphicSystem extends AbstractSystem
 
     public function clearMainScreen(): void
     {
-        popen('cls', 'w');       // windows
-//        system('clear');  // unix
+//        popen('cls', 'w');       // windows
+        system('clear');  // unix
     }
 
     public function displayMainScreen(): void

@@ -18,6 +18,7 @@ use App\Events\StartGame;
 use App\Events\UpdateGameState;
 use App\Events\UpdateMainScreen;
 use App\Exception\CardGame\AttemptOpenMissingCardException;
+use App\Exception\CardGame\CardDeckNotExistException;
 use App\Exception\CardGame\CardsNotSameSuitException;
 use App\Exception\CardGame\CardsSameColorException;
 use App\Exception\CardGame\CardsSameSuitException;
@@ -25,13 +26,13 @@ use App\Exception\CardGame\MainDeckClosedForShufflingException;
 use App\Exception\CardGame\NotValidMoveException;
 use App\Exception\CardGame\PlayingCardMissingException;
 use App\Exception\CardGame\SectionNotExistException;
-use App\Factory\DeckFactory\CardDecksFactoryInterface;
+use App\Factory\DeckFactory\CardDecksFactory;
 use App\GameObject\Card;
 use Exception;
 
 class CardGame extends AbstractSystem
 {
-    private CardDecksFactoryInterface $cardDecksFactory;
+    private CardDecksFactory $cardDecksFactory;
 
     private array $gameData = [
         'gameState' => [],
@@ -60,7 +61,7 @@ class CardGame extends AbstractSystem
         self::SECTION_WINNING_CARD_DECK => 4
     ];
 
-    public function __construct(CardDecksFactoryInterface $cardDecksFactory)
+    public function __construct(CardDecksFactory $cardDecksFactory)
     {
         $this->cardDecksFactory = $cardDecksFactory;
     }
@@ -74,6 +75,7 @@ class CardGame extends AbstractSystem
             'C' => fn() => $this->cancelLastMove()
         ];
     }
+
     public function getSubscriptions(): array
     {
         return [
@@ -183,6 +185,7 @@ class CardGame extends AbstractSystem
             $this->eventPusher->push($event1, $event2, $event3);
         }
     }
+
     /**
      * @throws Exception
      */
@@ -350,6 +353,7 @@ class CardGame extends AbstractSystem
         }
         return true;
     }
+
     /**
      * @throws NotValidMoveException
      */
@@ -383,7 +387,6 @@ class CardGame extends AbstractSystem
         }
 
         if ($playerInput['sectionTo'] == self::SECTION_COLUMN_CARDS) {
-
             if ($card->getNumCard() >= $cardOnWhichToPut->getNumCard() || $card->getNumCard() < $cardOnWhichToPut->getNumCard() - 1 || empty($cardOnWhichToPut)) {
                 throw new NotValidMoveException();
             }
@@ -424,6 +427,7 @@ class CardGame extends AbstractSystem
 
     /**
      * @throws CardsSameColorException
+     * @throws CardsNotSameSuitException
      */
     public function checkTheAbilityToMoveByColorCards(array $playerInput): void
     {
@@ -435,7 +439,9 @@ class CardGame extends AbstractSystem
         if ($card->getColor() === $cardOnWhichToPut->getColor() && $playerInput['sectionTo'] != self::SECTION_WINNING_CARD_DECK) {
             throw new CardsSameColorException();
         }
-
+        if ($card->getColor() !== $cardOnWhichToPut->getColor() && $playerInput['sectionTo'] === self::SECTION_WINNING_CARD_DECK) {
+            throw new CardsNotSameSuitException();
+        }
     }
 
     public function openCardInMainDeck(): void
@@ -507,7 +513,7 @@ class CardGame extends AbstractSystem
                     $event4 = new DisplayMainScreenWithFirstInput();
                     $this->eventPusher->push($event1, $event2, $event3, $event4);
                     return;
-                } catch (Exception $message) {
+                } catch (Exception $e) {
                     continue;
                 }
             }
@@ -588,6 +594,7 @@ class CardGame extends AbstractSystem
         $event4 = new DisplayMainScreenWithFirstInput();
         $this->eventPusher->push($event1, $event2, $event3, $event4);
     }
+
     public function allCardsAreOpen(array $cardDeck): bool
     {
         foreach ($cardDeck as $card) {
@@ -687,7 +694,6 @@ class CardGame extends AbstractSystem
         array_pop($this->gameData['historyPlayerInput']);
     }
 
-
     public function returnPositionOfCardsAfterCancelMove(array $playerInput): void
     {
         $sectionFrom = $this->gameData['gameState']['columnsCardDeck'][$playerInput['numDeckFrom'] - 1];
@@ -707,10 +713,11 @@ class CardGame extends AbstractSystem
     public function playingCardMissing(array $gameData): void
     {
         $card = $this->getCardOnPlayerInputFrom($gameData);
-        if (empty($card)) {
+        if (!$card) {
             throw new PlayingCardMissingException();
         }
     }
+
     /**
      * @throws SectionNotExistException
      */
@@ -724,15 +731,15 @@ class CardGame extends AbstractSystem
     }
 
     /**
-     * @throws SectionNotExistException
+     * @throws CardDeckNotExistException
      */
     public function thisCardDeckExists(array $gameData): void
     {
         if ($gameData['numDeckFrom'] > $this->numberOfDecksInSection[$gameData['sectionFrom']] || $gameData['numDeckFrom'] < 1) {
-            throw new SectionNotExistException();
+            throw new CardDeckNotExistException();
         }
         if ($gameData['numDeckTo'] > $this->numberOfDecksInSection[$gameData['sectionTo']] || $gameData['numDeckTo'] < 1) {
-            throw new SectionNotExistException();
+            throw new CardDeckNotExistException();
         }
     }
 
